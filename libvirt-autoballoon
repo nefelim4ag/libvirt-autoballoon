@@ -1,0 +1,104 @@
+#!/bin/bash
+
+RUN_DIR=/run/libvirt-autoballoon
+mkdir -p "$RUN_DIR"
+
+PAGE_SIZE=$(getconf PAGESIZE)
+PAGE_SIZE_KiB=$((PAGE_SIZE/1024))
+
+ROUND_DOWN=$((PAGE_SIZE_KiB*1024))
+
+vm_memstat(){
+        VM="$1"
+        type="$2"
+        grep "$type" $RUN_DIR/"$VM".memstat | grep -o '[0-9]*'
+}
+
+vm_update_memstat(){
+        VM="$1"
+        virsh dommemstat --domain "$VM" --live > $RUN_DIR/"$VM".memstat
+}
+
+vm_balloon(){
+        VM="$1"
+        SHRINK_TO_KiB="$2"
+        ACTUAL_MEM_OLD="$3"
+        virsh setmem --domain "$VM" --size "$SHRINK_TO_KiB" 1> /dev/null
+        if [ ! -z "$ACTUAL_MEM_OLD" ]; then
+                if ((ACTUAL_MEM_OLD >= SHRINK_TO_KiB)); then
+                        echo "Shrink $VM: $((ACTUAL_MEM_OLD/1024)) -> $((SHRINK_TO_KiB/1024)) MiB"
+                else
+                        echo "Grow $VM:   $((SHRINK_TO_KiB/1024)) <- $((ACTUAL_MEM_OLD/1024)) MiB"
+                fi
+        fi
+}
+
+main(){
+        virsh -c qemu:///system list --name | sort -u | \
+        while read -r VM; do
+                [ -z "$VM" ] && continue
+                vm_update_memstat "$VM"
+
+                TOTAL_RAM_KiB=$(vm_memstat "$VM" available)
+                ACTUAL_RAM_KiB=$(vm_memstat "$VM" actual)
+                UNUSED_RAM_KiB=$(vm_memstat "$VM" unused)
+                USED_RAM_KiB=$((ACTUAL_RAM_KiB-UNUSED_RAM_KiB))
+
+                KEEP_AVAIL_THRESHOLD=$((TOTAL_RAM_KiB/8))
+
+                PERC=$((UNUSED_RAM_KiB*100/KEEP_AVAIL_THRESHOLD))
+                if ((PERC < 90)); then
+                        if ((ACTUAL_RAM_KiB < TOTAL_RAM_KiB)); then
+                                DIFF=$((TOTAL_RAM_KiB - ACTUAL_RAM_KiB))
+                                DIFF=$((DIFF/8))
+                                if ((DIFF > ROUND_DOWN)); then
+                                        vm_balloon "$VM" $((ACTUAL_RAM_KiB+DIFF)) $ACTUAL_RAM_KiB
+                                else
+                                        vm_balloon "$VM" $((ACTUAL_RAM_KiB+PAGE_SIZE_KiB)) $ACTUAL_RAM_KiB
+                                fi
+                        fi
+                elif ((PERC > 150)); then
+                        DIFF=$((ACTUAL_RAM_KiB - UNUSED_RAM_KiB))
+                        DIFF=$((DIFF/8))
+                        if ((DIFF > ROUND_DOWN)); then
+                                vm_balloon "$VM" $((ACTUAL_RAM_KiB-DIFF)) $ACTUAL_RAM_KiB
+                        else
+                                vm_balloon "$VM" $((ACTUAL_RAM_KiB-PAGE_SIZE_KiB)) $ACTUAL_RAM_KiB
+                        fi
+                fi
+        done
+}
+
+status(){
+        virsh -c qemu:///system list --name | sort -u | \
+        while read -r VM; do
+                [ -z "$VM" ] && continue
+                vm_update_memstat "$VM"
+
+                TOTAL_RAM_KiB=$(vm_memstat "$VM" available)
+                ACTUAL_RAM_KiB=$(vm_memstat "$VM" actual)
+                UNUSED_RAM_KiB=$(vm_memstat "$VM" unused)
+                USED_RAM_KiB=$((ACTUAL_RAM_KiB-UNUSED_RAM_KiB))
+
+                KEEP_AVAIL_THRESHOLD=$((TOTAL_RAM_KiB/8))
+
+                PERC=$((UNUSED_RAM_KiB*100/KEEP_AVAIL_THRESHOLD))
+                {
+                        echo -e "Total Actual Used Unused Threshold - Thr_Perc"
+                        echo -e "$((TOTAL_RAM_KiB/1024)) $((ACTUAL_RAM_KiB/1024)) $((USED_RAM_KiB/1024)) $((UNUSED_RAM_KiB/1024)) $((KEEP_AVAIL_THRESHOLD/1024)) MiB ${PERC}%"
+                } | column -t
+        done
+}
+
+case "$1" in
+        start)
+                while sleep 1s; do
+                        echo "Wait starting of libvirtd"
+                        systemctl is-active libvirtd && break
+                done
+                while sleep 1s; do
+                        main
+                done
+        ;;
+        status) status ;;
+esac
