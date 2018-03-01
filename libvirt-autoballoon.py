@@ -8,8 +8,15 @@ SZ_1KiB = 1
 SZ_4KiB = 4
 SZ_1MiB = 1024
 SZ_4MiB = 4096
+SZ_32MiB = 32768
 
 THRESHOLD_RATIO = 0.125
+
+
+def ALIGN_DOWN(x, a):
+    x = int(x)
+    a = int(a)
+    return x & ~ (a-1)
 
 
 def get_connection():
@@ -20,43 +27,67 @@ def get_connection():
     return conn
 
 
+def dom_ram_total(dom):
+    info = dom.info()
+    total_ram = info[1]
+    return total_ram
+
+
+def dom_ram_used(dom):
+    memstat = dom.memoryStats()
+    return memstat["actual"] - memstat["usable"]
+
+
+def dom_ram_actual(dom):
+    memstat = dom.memoryStats()
+    return memstat["actual"]
+
+
 def dom_balloon(dom, restrict_to):
     name = dom.name()
-    memstat = dom.memoryStats()
-    actual = memstat["actual"]
+    actual = dom_ram_actual(dom)
     restrict_to = int(restrict_to)
     actual_m = int(actual / SZ_1MiB)
     restrict_to_m = int(restrict_to / SZ_1MiB)
+    diff = abs(actual_m - restrict_to_m)
     if actual > restrict_to:
-        print("Shrink dom:", name, actual_m, "->", restrict_to_m, "MiB", flush=True)
+        print("Shrink dom:",
+              name,
+              actual_m, "-", diff, "=", restrict_to_m, "MiB", flush=True)
     else:
-        print("Grow dom:",   name, restrict_to_m, "<-", actual_m, "MiB", flush=True)
+        print("Grow dom:",
+              name,
+              actual_m, "+", diff, "=", restrict_to_m, "MiB", flush=True)
     dom.setMemory(restrict_to)
 
 
-def process_domainID(dom):
+def dom_keep_usable(dom):
+    total_ram = dom_ram_total(dom)
+    return total_ram*THRESHOLD_RATIO
+
+
+def dom_usable_ratio(dom):
     memstat = dom.memoryStats()
-
-    actual = memstat["actual"]
-    available = memstat["available"]
     usable = memstat["usable"]
-    used = actual - usable
+    return usable/dom_keep_usable(dom)
 
-    keep_avail_threshold = available*THRESHOLD_RATIO
-    ratio_current = usable/keep_avail_threshold
-    if ratio_current < 0.9:
-        if actual < available:
-            # Balloon memory by some diff of diff
-            diff = (actual - used)*THRESHOLD_RATIO
-            if diff < SZ_4MiB:
-                diff = 0
-            dom_balloon(dom, actual + diff + SZ_4KiB)
-    else:
-        if ratio_current > 1.4:
-            diff = (actual - usable)*THRESHOLD_RATIO
-            if diff < SZ_4MiB:
-                diff = 0
-            dom_balloon(dom, actual - diff - SZ_4KiB)
+
+def process_domainID(dom):
+    total_ram = dom_ram_total(dom)
+    actual = dom_ram_actual(dom)
+    keep_usable = dom_keep_usable(dom)
+    used = dom_ram_used(dom)
+
+    diff = used*THRESHOLD_RATIO
+    diff = ALIGN_DOWN(diff, SZ_32MiB)
+    if diff == 0:
+        diff = SZ_1MiB
+
+    ratio_current = dom_usable_ratio(dom)
+    if ratio_current < 1.0 and actual < total_ram:
+        dom_balloon(dom, actual + diff)
+    elif ratio_current > 1.5 and actual > keep_usable:
+        dom_balloon(dom, actual - diff)
 
 
 def daemon():
@@ -87,6 +118,25 @@ def daemon():
         sleep(SLEEP_TIME)
 
 
+def dom_status(dom):
+    memstat = dom.memoryStats()
+    total_ram = dom_ram_total(dom)
+    Name = dom.name()
+    actual = memstat["actual"]
+    usable = memstat["usable"]
+    used = dom_ram_used(dom)
+    keep_usable = dom_keep_usable(dom)
+    ratio_current = dom_usable_ratio(dom)
+    print(Name,
+          int(total_ram/SZ_1MiB),
+          int(actual/SZ_1MiB),
+          int(used/SZ_1MiB),
+          int(usable/SZ_1MiB),
+          int(keep_usable/SZ_1MiB),
+          "MiB",
+          format(ratio_current, '2.3'), sep='\t', flush=True)
+
+
 def status():
     print("Connecting to libvirt", flush=True)
     conn = get_connection()
@@ -95,29 +145,13 @@ def status():
         print('No active domains', file=sys.stderr, flush=True)
         return
 
-    print("Name", "Total", "Active", "Used", "Usable", "Thrshld", "Units", "Ratio", sep='\t', flush=True)
+    print("Name", "Total", "Actual", "Used", "Usable", "Thrshld", "Units", "Ratio", sep='\t', flush=True)
     for domainID in domainIDs:
         dom = conn.lookupByID(domainID)
-        memstat = dom.memoryStats()
-        Name = dom.name()
-        actual = memstat["actual"]
-        available = memstat["available"]
-        usable = memstat["usable"]
-        used = actual - usable
-        keep_avail_threshold = available*THRESHOLD_RATIO
-        ratio_current = usable/keep_avail_threshold
-        print(Name,
-              int(available/SZ_1MiB),
-              int(actual/SZ_1MiB),
-              int(used/SZ_1MiB),
-              int(usable/SZ_1MiB),
-              int(keep_avail_threshold/SZ_1MiB),
-              "MiB",
-              format(ratio_current, '2.2'), sep='\t', flush=True)
+        dom_status(dom)
 
 
 def main():
-    print("Start libvirt-autoballoon, argv:", sys.argv, flush=True)
     if sys.argv[1] == "start":
         daemon()
     if sys.argv[1] == "status":
