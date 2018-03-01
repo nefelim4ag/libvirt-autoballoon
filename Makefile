@@ -2,15 +2,18 @@ PREFIX ?= /
 
 SRC_DIR := $(dir $(lastword $(MAKEFILE_LIST)))
 
+S_SERVICE := $(SRC_DIR)/libvirt-autoballoon.service
+S_BIN := $(SRC_DIR)/libvirt-autoballoon.py
+
 SERVICE := $(PREFIX)/lib/systemd/system/libvirt-autoballoon.service
 BIN := $(PREFIX)/usr/bin/libvirt-autoballoon
 
 default:  help
 
-$(BIN): $(SRC_DIR)/libvirt-autoballoon
+$(BIN): $(S_BIN)
 	install -Dm755 $< $@
 
-$(SERVICE): $(SRC_DIR)/libvirt-autoballoon.service
+$(SERVICE): $(S_SERVICE)
 	install -Dm644 $< $@
 
 
