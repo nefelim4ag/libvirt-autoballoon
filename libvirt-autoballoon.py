@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
-from time import sleep
-import libvirt
 import sys
+import libvirt
+
+from time import sleep
+
 
 SZ_1KiB = 1
 SZ_4KiB = 4
@@ -16,7 +18,7 @@ THRESHOLD_RATIO = 0.125
 def ALIGN_DOWN(x, a):
     x = int(x)
     a = int(a)
-    return x & ~ (a-1)
+    return x & ~ (a - 1)
 
 
 def get_connection():
@@ -35,7 +37,7 @@ def dom_ram_total(dom):
 
 def dom_ram_used(dom):
     memstat = dom.memoryStats()
-    return memstat["actual"] - memstat["usable"]
+    return memstat.get("actual", 0) - memstat.get("usable", 0)
 
 
 def dom_ram_actual(dom):
@@ -63,13 +65,13 @@ def dom_balloon(dom, restrict_to):
 
 def dom_keep_usable(dom):
     total_ram = dom_ram_total(dom)
-    return total_ram*THRESHOLD_RATIO
+    return total_ram * THRESHOLD_RATIO
 
 
 def dom_usable_ratio(dom):
     memstat = dom.memoryStats()
-    usable = memstat["usable"]
-    return usable/dom_keep_usable(dom)
+    usable = memstat.get("usable", 0)
+    return usable / dom_keep_usable(dom)
 
 
 def process_domainID(dom):
@@ -78,7 +80,7 @@ def process_domainID(dom):
     keep_usable = dom_keep_usable(dom)
     used = dom_ram_used(dom)
 
-    diff = used*THRESHOLD_RATIO
+    diff = used * THRESHOLD_RATIO
     diff = ALIGN_DOWN(diff, SZ_32MiB)
     if diff == 0:
         diff = SZ_1MiB
@@ -128,11 +130,11 @@ def dom_status(dom):
     keep_usable = dom_keep_usable(dom)
     ratio_current = dom_usable_ratio(dom)
     print(Name,
-          int(total_ram/SZ_1MiB),
-          int(actual/SZ_1MiB),
-          int(used/SZ_1MiB),
-          int(usable/SZ_1MiB),
-          int(keep_usable/SZ_1MiB),
+          int(total_ram / SZ_1MiB),
+          int(actual / SZ_1MiB),
+          int(used / SZ_1MiB),
+          int(usable / SZ_1MiB),
+          int(keep_usable / SZ_1MiB),
           "MiB",
           format(ratio_current, '2.3'), sep='\t', flush=True)
 
@@ -152,6 +154,9 @@ def status():
 
 
 def main():
+    if len(sys.argv) < 2:
+        print(sys.argv[0], "<start|status>")
+        exit(1)
     if sys.argv[1] == "start":
         daemon()
     if sys.argv[1] == "status":
