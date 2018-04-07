@@ -15,18 +15,101 @@ SZ_32MiB = 32768
 THRESHOLD_RATIO = 0.125
 
 
+class ExitFailure(Exception):
+    pass
+
+
+class LibVirtAutoBalloon:
+    sleep_time = 1
+
+    def __init__(self, qemu_addr='qemu:///system'):
+        print("Connecting to libvirt", flush=True)
+        conn = libvirt.open(qemu_addr)
+        if conn is None:
+            raise ExitFailure('Failed to open connection to the hypervisor')
+        self.conn = conn
+
+    def dom_status(self, dom):
+        memstat = dom.memoryStats()
+        total_ram = dom_ram_total(dom)
+        Name = dom.name()
+        actual = memstat["actual"]
+        usable = memstat["usable"]
+        used = dom_ram_used(dom)
+        keep_usable = dom_keep_usable(dom)
+        ratio_current = dom_usable_ratio(dom)
+        print(Name,
+              int(total_ram / SZ_1MiB),
+              int(actual / SZ_1MiB),
+              int(used / SZ_1MiB),
+              int(usable / SZ_1MiB),
+              int(keep_usable / SZ_1MiB),
+              "MiB",
+              format(ratio_current, '2.3'), sep='\t', flush=True)
+
+    def status(self):
+        domainIDs = self.conn.listDomainsID()
+        if domainIDs is None:
+            raise ExitFailure('No active domains')
+        print("Name", "Total", "Actual", "Used", "Usable", "Thrshld", "Units", "Ratio", sep='\t', flush=True)
+        for domainID in domainIDs:
+            dom = self.conn.lookupByID(domainID)
+            self.dom_status(dom)
+
+    def process_domainID(self, dom):
+        total_ram = dom_ram_total(dom)
+        actual = dom_ram_actual(dom)
+        keep_usable = dom_keep_usable(dom)
+        used = dom_ram_used(dom)
+
+        diff = used * THRESHOLD_RATIO
+        diff = ALIGN_DOWN(diff, SZ_32MiB)
+        if diff == 0:
+            diff = SZ_1MiB
+
+        ratio_current = dom_usable_ratio(dom)
+        if ratio_current < 1.0 and actual < total_ram:
+            dom_balloon(dom, actual + diff)
+        elif ratio_current > 1.5 and actual > keep_usable:
+            dom_balloon(dom, actual - diff)
+
+    def dom_print_names(self):
+        domainNames = []
+        for i in self.conn.listAllDomains():
+            domainNames.append(i.name())
+        print("Found domains:", domainNames, flush=True)
+
+    def daemon(self):
+        self.sleep_time = 1
+        print("Start daemon", flush=True)
+
+        domain_count = -1
+        while True:
+            domainIDs = self.conn.listDomainsID()
+
+            if domainIDs is None:
+                print('No active domains', file=sys.stderr, flush=True)
+                if self.sleep_time < 10:
+                    self.sleep_time += 1
+            else:
+                if domain_count != len(domainIDs):
+                    domain_count = len(domainIDs)
+                    self.dom_print_names()
+
+                if self.sleep_time > 1:
+                    self.sleep_time -= 1
+
+                for domainID in domainIDs:
+                    dom = self.conn.lookupByID(domainID)
+                    self.process_domainID(dom)
+
+            sleep(self.sleep_time)
+
+
 def ALIGN_DOWN(x, a):
     x = int(x)
     a = int(a)
     return x & ~ (a - 1)
-
-
-def get_connection():
-    conn = libvirt.open('qemu:///system')
-    if conn is None:
-        print('Failed to open connection to the hypervisor', flush=True)
-        sys.exit(1)
-    return conn
 
 
 def dom_ram_total(dom):
@@ -74,93 +157,22 @@ def dom_usable_ratio(dom):
     return usable / dom_keep_usable(dom)
 
 
-def process_domainID(dom):
-    total_ram = dom_ram_total(dom)
-    actual = dom_ram_actual(dom)
-    keep_usable = dom_keep_usable(dom)
-    used = dom_ram_used(dom)
+def libvirt_autoballoon(argv):
+    if len(argv) < 2:
+        print()
+        raise ExitFailure("{} <start|status>".format(argv[0]))
 
-    diff = used * THRESHOLD_RATIO
-    diff = ALIGN_DOWN(diff, SZ_32MiB)
-    if diff == 0:
-        diff = SZ_1MiB
+    lv_ctrl = LibVirtAutoBalloon()
 
-    ratio_current = dom_usable_ratio(dom)
-    if ratio_current < 1.0 and actual < total_ram:
-        dom_balloon(dom, actual + diff)
-    elif ratio_current > 1.5 and actual > keep_usable:
-        dom_balloon(dom, actual - diff)
+    if argv[1] == "start":
+        lv_ctrl.daemon()
+    elif argv[1] == "status":
+        lv_ctrl.status()
 
 
-def daemon():
-    SLEEP_TIME = 1
-    print("Connecting to libvirt", flush=True)
-    conn = get_connection()
-
-    print("Start daemon", flush=True)
-    domainNames = []
-
-    for i in conn.listAllDomains():
-        domainNames.append(i.name())
-
-    print("Found domains:", domainNames, flush=True)
-
-    while True:
-        domainIDs = conn.listDomainsID()
-        if domainIDs is None:
-            print('No active domains', file=sys.stderr, flush=True)
-            if SLEEP_TIME < 10:
-                SLEEP_TIME += 1
-        else:
-            if SLEEP_TIME > 1:
-                SLEEP_TIME -= 1
-            for domainID in domainIDs:
-                dom = conn.lookupByID(domainID)
-                process_domainID(dom)
-        sleep(SLEEP_TIME)
+def main(argv):
+    libvirt_autoballoon(argv)
 
 
-def dom_status(dom):
-    memstat = dom.memoryStats()
-    total_ram = dom_ram_total(dom)
-    Name = dom.name()
-    actual = memstat["actual"]
-    usable = memstat["usable"]
-    used = dom_ram_used(dom)
-    keep_usable = dom_keep_usable(dom)
-    ratio_current = dom_usable_ratio(dom)
-    print(Name,
-          int(total_ram / SZ_1MiB),
-          int(actual / SZ_1MiB),
-          int(used / SZ_1MiB),
-          int(usable / SZ_1MiB),
-          int(keep_usable / SZ_1MiB),
-          "MiB",
-          format(ratio_current, '2.3'), sep='\t', flush=True)
-
-
-def status():
-    print("Connecting to libvirt", flush=True)
-    conn = get_connection()
-    domainIDs = conn.listDomainsID()
-    if domainIDs is None:
-        print('No active domains', file=sys.stderr, flush=True)
-        return
-
-    print("Name", "Total", "Actual", "Used", "Usable", "Thrshld", "Units", "Ratio", sep='\t', flush=True)
-    for domainID in domainIDs:
-        dom = conn.lookupByID(domainID)
-        dom_status(dom)
-
-
-def main():
-    if len(sys.argv) < 2:
-        print(sys.argv[0], "<start|status>")
-        exit(1)
-    if sys.argv[1] == "start":
-        daemon()
-    if sys.argv[1] == "status":
-        status()
-
-
-main()
+if __name__ == '__main__':
+    main(sys.argv)
