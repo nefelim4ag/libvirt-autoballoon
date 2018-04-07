@@ -21,13 +21,13 @@ class ExitFailure(Exception):
 
 class LibVirtAutoBalloon:
     sleep_time = 1
+    conn = None
 
     def __init__(self, qemu_addr='qemu:///system'):
         print("Connecting to libvirt", flush=True)
-        conn = libvirt.open(qemu_addr)
-        if conn is None:
+        self.conn = libvirt.open(qemu_addr)
+        if self.conn is None:
             raise ExitFailure('Failed to open connection to the hypervisor')
-        self.conn = conn
 
     def dom_status(self, dom):
         memstat = dom.memoryStats()
@@ -125,7 +125,7 @@ def dom_ram_used(dom):
 
 def dom_ram_actual(dom):
     memstat = dom.memoryStats()
-    return memstat["actual"]
+    return memstat.get("actual", 0)
 
 
 def dom_balloon(dom, restrict_to):
