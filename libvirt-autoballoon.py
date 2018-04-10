@@ -12,7 +12,7 @@ SZ_1MiB = 1024
 SZ_4MiB = 4096
 SZ_32MiB = 32768
 
-THRESHOLD_RATIO = 0.125
+THRESHOLD_RATIO = 0.25
 
 
 class ExitFailure(Exception):
