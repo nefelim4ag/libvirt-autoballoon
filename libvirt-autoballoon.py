@@ -132,6 +132,11 @@ def dom_balloon(dom, restrict_to):
     name = dom.name()
     actual = dom_ram_actual(dom)
     restrict_to = int(restrict_to)
+    total_ram = dom_ram_total(dom)
+
+    if restrict_to > total_ram:
+        restrict_to = total_ram
+
     actual_m = int(actual / SZ_1MiB)
     restrict_to_m = int(restrict_to / SZ_1MiB)
     diff = abs(actual_m - restrict_to_m)
