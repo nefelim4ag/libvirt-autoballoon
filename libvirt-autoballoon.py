@@ -49,8 +49,8 @@ class LibVirtAutoBalloon:
         actual = memstat["actual"]
         usable = memstat["usable"]
         used = dom_ram_used(dom)
-        keep_usable = dom_keep_usable(dom)
-        ratio_current = dom_usable_ratio(dom)
+        keep_usable = self.dom_keep_usable(dom)
+        ratio_current = self.dom_usable_ratio(dom)
         print(Name,
               int(total_ram / SZ_1MiB),
               int(actual / SZ_1MiB),
@@ -74,7 +74,7 @@ class LibVirtAutoBalloon:
             return
         total_ram = dom_ram_total(dom)
         actual = dom_ram_actual(dom)
-        keep_usable = dom_keep_usable(dom)
+        keep_usable = self.dom_keep_usable(dom)
         used = dom_ram_used(dom)
 
         diff = used * THRESHOLD_RATIO
@@ -82,7 +82,7 @@ class LibVirtAutoBalloon:
         if diff == 0:
             diff = SZ_1MiB
 
-        ratio_current = dom_usable_ratio(dom)
+        ratio_current = self.dom_usable_ratio(dom)
         if ratio_current < 1.0 and actual < total_ram:
             dom_balloon(dom, actual + diff)
         elif ratio_current > 1.5 and actual > keep_usable:
@@ -96,6 +96,24 @@ class LibVirtAutoBalloon:
         for i in domainNames:
             if i not in self.allowed_vms:
                 print("{} not in autoballoon.json, ignored".format(i), flush=True)
+
+    def dom_keep_usable(self, dom):
+        name = dom.name()
+        total_ram = dom_ram_total(dom)
+        keep_usable = total_ram * THRESHOLD_RATIO
+        for vm in self.config["vms"]:
+            if vm.get("name") == name:
+                if vm.get("keep_free_kb"):
+                    keep_usable = int(vm.get("keep_free_kb"))
+
+        if keep_usable > total_ram:
+            keep_usable = total_ram
+
+        return keep_usable
+
+    def dom_usable_ratio(self, dom):
+        usable = dom.memoryStats().get("usable", 0)
+        return usable / self.dom_keep_usable(dom)
 
     def daemon(self):
         self.sleep_time = 1
@@ -169,21 +187,16 @@ def dom_balloon(dom, restrict_to):
     dom.setMemory(restrict_to)
 
 
-def dom_keep_usable(dom):
-    total_ram = dom_ram_total(dom)
-    return total_ram * THRESHOLD_RATIO
-
-
-def dom_usable_ratio(dom):
-    memstat = dom.memoryStats()
-    usable = memstat.get("usable", 0)
-    return usable / dom_keep_usable(dom)
+def help():
+    print("Usage: libvirt-autoballoon <arg>", flush=True)
+    print("    start  - start daemon", flush=True)
+    print("    status - show what daemon see", flush=True)
+    exit(0)
 
 
 def libvirt_autoballoon(argv):
     if len(argv) < 2:
-        print()
-        raise ExitFailure("{} <start|status>".format(argv[0]))
+        help()
 
     lv_ctrl = LibVirtAutoBalloon()
 
@@ -191,6 +204,8 @@ def libvirt_autoballoon(argv):
         lv_ctrl.daemon()
     elif argv[1] == "status":
         lv_ctrl.status()
+    else:
+        help()
 
 
 def main(argv):

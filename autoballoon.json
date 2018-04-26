@@ -1,7 +1,8 @@
 {"vms": [
     {
         "name": "vm_name1",
-        "balloon": true
+        "balloon": true,
+        "keep_free_kb": 1048576
     },
     {
         "name": "vm_name2",
