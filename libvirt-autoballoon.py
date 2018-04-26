@@ -95,7 +95,7 @@ class LibVirtAutoBalloon:
         print("Found domains:", domainNames, flush=True)
         for i in domainNames:
             if i not in self.allowed_vms:
-                print("{} not in autoballoon.json, ignored".format(i))
+                print("{} not in autoballoon.json, ignored".format(i), flush=True)
 
     def daemon(self):
         self.sleep_time = 1
