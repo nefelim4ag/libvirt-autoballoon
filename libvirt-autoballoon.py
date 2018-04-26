@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import sys
+import json
 import libvirt
 
 from time import sleep
@@ -22,12 +23,24 @@ class ExitFailure(Exception):
 class LibVirtAutoBalloon:
     sleep_time = 1
     conn = None
+    config = None
+    allowed_vms = []
+    configfile = "/etc/libvirt/autoballoon.json"
 
     def __init__(self, qemu_addr='qemu:///system'):
         print("Connecting to libvirt", flush=True)
         self.conn = libvirt.open(qemu_addr)
         if self.conn is None:
             raise ExitFailure('Failed to open connection to the hypervisor')
+        self.__load_config()
+
+    def __load_config(self):
+        print("Load config file: {}".format(self.configfile))
+        content = open(self.configfile).read(-1)
+        self.config = json.loads(content, parse_int=int)
+        for i in self.config["vms"]:
+            if i["balloon"] == True:
+                self.allowed_vms += i["name"]
 
     def dom_status(self, dom):
         memstat = dom.memoryStats()
@@ -57,6 +70,8 @@ class LibVirtAutoBalloon:
             self.dom_status(dom)
 
     def process_domainID(self, dom):
+        if dom.name() not in self.allowed_vms:
+            return
         total_ram = dom_ram_total(dom)
         actual = dom_ram_actual(dom)
         keep_usable = dom_keep_usable(dom)
@@ -76,8 +91,11 @@ class LibVirtAutoBalloon:
     def dom_print_names(self):
         domainNames = []
         for i in self.conn.listAllDomains():
-            domainNames.append(i.name())
+            domainNames += [i.name()]
         print("Found domains:", domainNames, flush=True)
+        for i in domainNames:
+            if i not in self.allowed_vms:
+                print("{} not in autoballoon.json, ignored".format(i))
 
     def daemon(self):
         self.sleep_time = 1

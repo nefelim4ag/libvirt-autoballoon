@@ -1,0 +1,10 @@
+{"vms": [
+    {
+        "name": "vm_name1",
+        "balloon": true
+    },
+    {
+        "name": "vm_name2",
+        "balloon": true
+    }
+]}
