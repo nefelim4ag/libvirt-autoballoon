@@ -39,8 +39,8 @@ class LibVirtAutoBalloon:
         content = open(self.configfile).read(-1)
         self.config = json.loads(content, parse_int=int)
         for i in self.config["vms"]:
-            if i["balloon"] == True:
-                self.allowed_vms += i["name"]
+            if i["balloon"] is True:
+                self.allowed_vms += [i["name"]]
 
     def dom_status(self, dom):
         memstat = dom.memoryStats()
