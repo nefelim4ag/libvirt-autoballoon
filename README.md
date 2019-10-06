@@ -11,5 +11,5 @@ Proof of concept
 ```
 ~# make install
 ~# systemctl enable libvirt-autoballoon
-~# systemctl start libvirt-autoballon
+~# systemctl start libvirt-autoballoon
 ```
