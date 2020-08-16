@@ -46,8 +46,8 @@ class LibVirtAutoBalloon:
         memstat = dom.memoryStats()
         total_ram = dom_ram_total(dom)
         Name = dom.name()
-        actual = memstat["actual"]
-        usable = memstat["usable"]
+        actual = memstat.get("actual", 0)
+        usable = memstat.get("usable", 0)
         used = dom_ram_used(dom)
         keep_usable = self.dom_keep_usable(dom)
         ratio_current = self.dom_usable_ratio(dom)
@@ -77,16 +77,17 @@ class LibVirtAutoBalloon:
         keep_usable = self.dom_keep_usable(dom)
         used = dom_ram_used(dom)
 
-        diff = used * THRESHOLD_RATIO
-        diff = ALIGN_DOWN(diff, SZ_32MiB)
-        if diff == 0:
-            diff = SZ_1MiB
+        if actual != used:
+            diff = used * THRESHOLD_RATIO
+            diff = ALIGN_DOWN(diff, SZ_32MiB)
+            if diff == 0:
+                diff = SZ_1MiB
 
-        ratio_current = self.dom_usable_ratio(dom)
-        if ratio_current < 1.0 and actual < total_ram:
-            dom_balloon(dom, actual + diff)
-        elif ratio_current > 1.5 and actual > keep_usable:
-            dom_balloon(dom, actual - diff)
+            ratio_current = self.dom_usable_ratio(dom)
+            if ratio_current < 1.0 and actual < total_ram:
+                dom_balloon(dom, actual + diff)
+            elif ratio_current > 1.5 and actual > keep_usable:
+                dom_balloon(dom, actual - diff)
 
     def dom_print_names(self):
         domainNames = []
